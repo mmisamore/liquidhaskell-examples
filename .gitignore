@@ -1,3 +1,5 @@
 .stack-work/
 liquidhaskell-examples.cabal
 *~
+src/.liquid/*
+
