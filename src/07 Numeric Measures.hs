@@ -257,7 +257,7 @@ outer xs ys = flatten (vDim xs) (vDim ys) vss
 
 -- Dimension-safe matrices without full dependent types
 {-@ data Matrix a = M { mRow :: Pos, mCol :: Pos, mElts :: VectorN (VectorN a mRow) mCol } @-}
-data Matrix a = M { mRow :: Int, mCol :: Int, mElts :: Vector (Vector a) } deriving (Eq, Show)
+data Matrix a     = M { mRow :: Int, mCol :: Int, mElts :: Vector (Vector a) } deriving (Eq, Show)
 
 -- Matrices with fixed dimensions
 {-@ type MatrixN a R C = {v:Matrix a | (mRow v == R) && (mCol v == C)} @-}
@@ -273,40 +273,40 @@ ok23 = M 2 3 (V 3 [
              )
 
 -- Guaranteed-safe constructor for matrices as sized lists of sized lists
-{-@ matFromList :: m:Pos -> n:Pos -> ListN (ListN a m) n -> MatrixN a m n @-}
-matFromList :: Int -> Int -> [[a]] -> Matrix a
-matFromList m n cols = M m n (vecFromList (map vecFromList cols))
+{-@ matFromList      :: m:Pos -> n:Pos -> ListN (ListN a m) n -> MatrixN a m n @-}
+matFromList          :: Int -> Int -> [[a]] -> Matrix a
+matFromList m n cols =  M m n (vecFromList (map vecFromList cols))
 
 -- Demo building a sized matrix from a list
 {-@ ok23' :: MatrixN Int 2 3 @-}
-ok23' :: Matrix Int
-ok23' = matFromList 2 3 [[1,4],[2,5],[3,6]]
+ok23'     :: Matrix Int
+ok23'     =  matFromList 2 3 [[1,4],[2,5],[3,6]]
 
 -- Construct a sized matrix from a sized vector as a single column
 {-@ singleCol :: m:Pos -> VectorN a m -> MatrixN a {m} 1 @-}
-singleCol :: Int -> Vector a -> Matrix a
-singleCol m xs = M m 1 (V 1 [xs]) 
+singleCol     :: Int -> Vector a -> Matrix a
+singleCol m xs =  M m 1 (V 1 [xs])
 
 -- Cons a sized column onto the front of a sized matrix assuming compatible dimensions
-{-@ consCol :: m:Pos -> k:Pos -> VectorN a m -> MatrixN a m k -> MatrixN a {m} {k+1} @-}
-consCol :: Int -> Int -> Vector a -> Matrix a -> Matrix a
-consCol m k col (M _ _ xs) = M m (k+1) (vCons col xs)
+{-@ consCol  :: m:Pos -> k:Pos -> VectorN a m -> MatrixN a m k -> MatrixN a {m} {k+1} @-}
+consCol      :: Int -> Int -> Vector a -> Matrix a -> Matrix a
+consCol m k col (M _ _ xs) =  M m (k+1) (vCons col xs)
 
 {-@ unconsRow :: m:Pos -> n:Pos -> VectorN (VectorN a m) n -> (VectorN a n, VectorN (VectorN a {m-1}) n) @-}
-unconsRow :: Int -> Int -> Vector (Vector a) -> (Vector a, Vector (Vector a))
-unconsRow m n (V _ css) = (vHeads m n css, vTails m n css)
+unconsRow     :: Int -> Int -> Vector (Vector a) -> (Vector a, Vector (Vector a))
+unconsRow m n (V _ css) =  (vHeads m n css, vTails m n css)
   where
     {-@ vHeads :: m:Pos -> n:Pos -> ListN (VectorN a m) n -> VectorN a n @-}
-    vHeads :: Int -> Int -> [Vector a] -> Vector a
+    vHeads     :: Int -> Int -> [Vector a] -> Vector a
     vHeads _ _ xs = vecFromList (map vHead xs)
 
     {-@ vTails :: m:Pos -> n:Pos -> ListN (VectorN a m) n -> VectorN (VectorN a {m-1}) n @-}
-    vTails :: Int -> Int -> [Vector a] -> Vector (Vector a)
+    vTails     :: Int -> Int -> [Vector a] -> Vector (Vector a)
     vTails _ _ xs = vecFromList (map vTail xs)
 
 -- Safely transpose a sized matrix. Guarantees correct output dimensions
 {-@ transpose :: m:Pos -> n:Pos -> MatrixN a m n -> MatrixN a n m @-}
-transpose :: Int -> Int -> Matrix a -> Matrix a 
+transpose     :: Int -> Int -> Matrix a -> Matrix a
 transpose m n (M _ _ cols) = 
   if m > 1 
     -- Transpose the rest and add the old first row as the first column
