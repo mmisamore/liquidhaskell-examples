@@ -1,6 +1,6 @@
-import Prelude hiding (reverse,elem)
+import Prelude hiding (reverse,elem,filter)
 
-import Data.Set hiding (insert,size) -- Spec file from LH Prelude embeds Data.Set into SMT set theory solver
+import Data.Set hiding (insert,size,filter) -- Spec file from LH Prelude embeds Data.Set into SMT set theory solver
 
 {-@ type True  = {v:Bool | v} @-}
 {-@ type False = {v:Bool | not v} @-}
@@ -61,8 +61,8 @@ elts (x:xs) = singleton x `union` elts xs
 -- A list whose element set equals that of another list 
 {-@ type ListEq a X = ListS a {elts X} @-}
 
--- A list whose element set is a subset of that of another list
-{-@ type ListSub a X = {v:[a] | Set_sub (elts v) X} @-}
+-- A list whose element set is a subset of that of another list 
+{-@ type ListSub a X = {v:[a] | Set_sub (elts v) (elts X)} @-}
 
 -- A list whose element set is a union of those of two other lists
 {-@ type ListUnion a X Y = ListS a {Set_cup (elts X) (elts Y)} @-}
@@ -71,7 +71,7 @@ elts (x:xs) = singleton x `union` elts xs
 {-@ type ListUn1 a X Y = ListS a {Set_cup (Set_sng X) (elts Y)} @-}
 
 -- Statically verify that appending lists results in a list whose element set is the set union of the inputs
-{-@ append :: xs:[a] -> ys:[a] -> ListUnion a xs ys @-} 
+{-@ append       :: xs:[a] -> ys:[a] -> ListUnion a xs ys @-}
 append           :: [a] -> [a] -> [a]
 append [] ys     =  ys
 append (x:xs) ys =  x : append xs ys
@@ -79,7 +79,7 @@ append (x:xs) ys =  x : append xs ys
 -- Reversing a list preserves the underlying set of elements. 
 -- Note that we don't check that it's length-preserving here.
 {-@ reverse :: xs:[a] -> ListEq a xs @-}
-reverse :: [a] -> [a]
+reverse     :: [a] -> [a]
 reverse []     = []
 reverse (x:xs) = append (reverse xs) [x]
 
@@ -91,10 +91,10 @@ reverse (x:xs) = append (reverse xs) [x]
 
 -- Split a list in half by taking every other element. Ensures that the set union of the resulting
 -- pair gives back the original list and that the sizes of the resulting lists are halved
-{-@ halve      :: xs:[a] -> {v:([a],[a]) | IsHalfSize (fst v) xs && IsHalfSize (snd v) xs && IsUnion (fst v) (snd v) xs} @-}
-halve          :: [a] -> ([a],[a])
-halve (x:y:xs) =  (x : ys, y : zs) where (ys,zs) = halve xs
-halve xs       =  (xs, [])
+{-@ halve :: xs:[a] -> {v:([a],[a]) | IsHalfSize (fst v) xs && IsHalfSize (snd v) xs && IsUnion (fst v) (snd v) xs} @-}
+halve     :: [a] -> ([a],[a])
+halve (x:y:xs) = (x : ys, y : zs) where (ys,zs) = halve xs
+halve xs       = (xs, [])
 
 -- Element membership on lists checked by element membership on the underlying sets
 {-@ elem :: x:a -> xs:[a] -> {v:Bool | v <=> member x (elts xs)} @-}
@@ -110,11 +110,11 @@ test2     =  elem 2 [1, 3]
 
 -- Insertion sort maintains the underlying set
 {-@ insertSort :: xs:[a] -> ListEq a xs @-}
-insertSort []       = [] 
-insertSort (x : xs) = insert x (insertSort xs) 
+insertSort []       = []
+insertSort (x : xs) = insert x (insertSort xs)
   where
-    {-@ insert :: x:a -> xs:[a] -> ListUn1 a x xs @-}
-    insert :: Ord a => a -> [a] -> [a]
+    {-@ insert :: Ord a => x:a -> xs:[a] -> ListUn1 a x xs @-}
+    insert     :: Ord a => a -> [a] -> [a]
     insert x []     = [x]
     insert x (y:ys) = if x <= y
                       then x : y : ys 
@@ -128,10 +128,10 @@ size []     =  0
 size (x:xs) =  1 + size xs
 
 -- Merge operation with proof that it unions the underlying sets 
-{-@ merge :: xs:List a -> ys:List a -> ListUnion a xs ys / [size xs + size ys] @-} 
-merge :: Ord a => [a] -> [a] -> [a]
-merge [] ys = ys 
-merge xs [] = xs 
+{-@ merge :: Ord a => xs:List a -> ys:List a -> ListUnion a xs ys / [size xs + size ys] @-}
+merge     :: Ord a => [a] -> [a] -> [a]
+merge [] ys = ys
+merge xs [] = xs
 merge (x:xs) (y:ys) = if x <= y
                       then x : merge xs (y : ys)
                       else y : merge (x : xs) ys
@@ -145,15 +145,162 @@ prop_append_merge xs ys = elts zs == elts zs'
 
 -- A merge sort with proof that element set of output agrees with the input
 {-@ mergeSort :: xs:List a -> ListEq a xs @-}
-mergeSort xs = go (size xs) xs
+mergeSort xs  =  go (size xs) xs
   where
-    {-@ go :: n:Nat -> xs:List a -> ListEq a xs @-}
-    go    :: Ord a => Int -> [a] -> [a]
+    {-@ go :: Ord a => n:Nat -> xs:List a -> ListEq a xs @-}
+    go     :: Ord a => Int -> [a] -> [a]
     go 0 xs = xs
     go _ [] = []
     go n xs = merge mys mzs
       where
         (ys,zs) = halve xs
-        mys     = if size ys < 2 then ys else go (n-1) ys
-        mzs     = if size zs < 2 then zs else go (n-1) zs
+        mys     = if size ys <= 1 then ys else go (n-1) ys
+        mzs     = if size zs <= 1 then zs else go (n-1) zs
+
+-- Assert that a list contains unique set of elements
+{-@ measure unique @-}
+unique        :: Ord a => [a] -> Bool
+unique []     =  True
+unique (x:xs) =  unique xs && not (x `member` elts (xs))
+
+-- Refinement type of lists with unique elements
+{-@ type UniqueList a = {v:List a | unique v} @-}
+
+-- Verified unique list
+{-@ isUnique :: UniqueList Int @-}
+isUnique :: [Int]
+isUnique = [1,2,3]
+
+-- Demo a list that is not unique
+-- {-@ isNotUnique :: UniqueList Int @-}
+{-isNotUnique :: [Int]-}
+{-isNotUnique = [1,2,3,1]-}
+
+-- Refined filter function
+{-@ filter      :: (a -> Bool) -> xs:UniqueList a -> ListSub a xs @-}
+filter          :: (a -> Bool) -> [a] -> [a]
+filter f []     =  []
+filter f (x:xs) =  if f x then x : filter f xs else filter f xs
+
+-- Produce a unique list from any list by removing duplicates
+{-@ nub :: Ord a => List a -> UniqueList a @-}
+nub     :: Ord a => [a] -> [a]
+nub xs  =  go [] xs
+  where
+    {-@ go :: Ord a => acc:UniqueList a -> xs:List a -> UniqueList a @-}
+    go     :: Ord a => [a] -> [a] -> [a]
+    go acc []                       = acc
+    go acc (x:xs)
+      | not (x `member` (elts acc)) = x:acc
+      | otherwise                   = acc
+
+-- This is what we would need as a lemma: asserting that taking a tail preserves uniqueness
+{-@ prop_tail :: xs:{v:UniqueList a | size v > 0} -> True @-}
+prop_tail (_:xs) = unique xs 
+
+-- Version of tail that respects uniqueness
+{-@ uniqueTail :: xs:{v:UniqueList a | size v > 0} -> UniqueList a @-}
+uniqueTail (_:xs) = xs 
+
+-- Append gives a unique list when the unique lists are disjoint
+{-@ append' :: 
+  xs:UniqueList a 
+  -> {ys:UniqueList a | Set_cap (elts xs) (elts ys) = empty} 
+  -> {v:UniqueList a  | (Set_cup (elts xs) (elts ys) = elts v)
+                        && (size v = size xs + size ys)} @-}
+append'     :: [a] -> [a] -> [a]
+append' [] ys     = ys
+append' (x:xs) ys = x : append' xs ys
+
+-- Naturals between I and J 
+{-@ type Btwn I J = {v:Nat | I < J && I <= v && v < J} @-}
+
+-- Safe head function on unique lists, which is also a measure
+{-@ measure head' @-}
+{-@ head'   :: {xs:UniqueList a | size xs > 0} -> a @-}
+head'       :: [a] -> a
+head' (x:_) =  x
+
+-- Safe tail for unique lists, which is also a measure
+{-@ measure tail' @-}
+{-@ tail'    :: {xs:UniqueList a | size xs > 0} -> UniqueList a @-}
+tail'        :: [a] -> [a]
+tail' (_:xs) =  xs
+
+-- Seems we need Reflection to easily prove this for unique lists
+{-@ range :: i:Nat -> j:Nat -> [Btwn i j] / [j - i] @-}
+range     :: Int -> Int -> [Int]
+range i j
+  | i < j     = i : range (i+1) j
+  | otherwise = [] 
+
+-- List reverse as a terminating uniqueness and set-preserving function 
+{-@ reverse'    :: xs:UniqueList a -> {v:UniqueList a | elts v = elts xs} @-}
+reverse'        :: [a] -> [a]
+reverse' []     =  []
+reverse' (x:xs) =  append' (reverse' xs) [x]
+
+-- Test set membership on lists
+{-@ predicate In X XS = member X (elts XS) @-}
+
+-- Test disjointness on lists
+{-@ predicate Disjoint XS YS = Set_cap (elts XS) (elts YS) = empty @-} 
+
+-- List Zippers
+{-@ 
+  data Zipper a = Zipper { 
+    focus :: a,
+    left  :: {v:UniqueList a | not (In focus v)},
+    right :: {v:UniqueList a | not (In focus v) && Disjoint v left}
+  } 
+@-}
+data Zipper a = Zipper { focus :: a, left :: [a], right :: [a] } deriving (Show)
+
+-- Measure the set of elements of a list zipper 
+{-@ measure zipElts @-}
+zipElts :: Ord a => Zipper a -> Set a 
+zipElts (Zipper x left right) = singleton x `union` (elts left) `union` (elts right)
+
+-- Zipper size as a measure
+{-@ measure zipSize @-}
+{-@ zipSize :: Zipper a -> Nat @-}
+zipSize :: Zipper a -> Int
+zipSize (Zipper x left right) = 1 + size left + size right
+
+-- Create a valid list zipper on a non-empty unique list, ensuring that all elements are preserved 
+{-@ differentiate    :: {xs:UniqueList a | size xs > 0} -> {v:Zipper a | zipElts v = elts xs} @-}
+differentiate        :: [a] -> Zipper a
+differentiate (x:xs) =  Zipper x [] xs
+
+-- Recreate a non-empty unique list from the corresponding list zipper, ensuring all elements are preserved
+{-@ integrate :: xs:Zipper a -> {v:UniqueList a | size v > 0 && elts v = zipElts xs} @-}
+integrate     :: Zipper a -> [a]
+integrate (Zipper x left right) = append' (reverse' left) (x : right)
+
+-- Shift the zipper to the left, preserving zipper invariants and the underlying set. Note: we don't enforce
+-- preservation of relative positions here, so this could still be more precise
+{-@ focusLeft :: xs:Zipper a -> {v:Zipper a | zipElts v = zipElts xs} @-}
+focusLeft     :: Zipper a -> Zipper a
+focusLeft (Zipper x [] right) 
+  = Zipper lastElt rest [] -- Wrap around to the end of the list so we have a total function
+      where (lastElt : rest) = reverse' (x:right) 
+focusLeft (Zipper x (l:ls) right) 
+  = Zipper l ls (x : right)
+
+-- Reverse a zipper
+{-@ reverseZipper :: xs:Zipper a -> {v:Zipper a | zipElts v = zipElts xs} @-}
+reverseZipper     :: Zipper a -> Zipper a
+reverseZipper (Zipper x left right) = Zipper x right left  
+
+-- Filter on unique lists. Filter always produces a subset
+{-@ filter' :: (a -> Bool) -> xs:UniqueList a -> {v:UniqueList a | Set_sub (elts v) (elts xs)} @-}
+filter' :: (a -> Bool) -> [a] -> [a]
+filter' f [] = []
+filter' f xs = if f y then y : filter' f ys else filter' f ys
+  where (y, ys) = (head' xs, tail' xs)
+
+-- Filter *unfocused* elements of a zipper - this is total
+filterZipper :: (a -> Bool) -> Zipper a -> Zipper a 
+filterZipper f (Zipper x left right) = Zipper x (filter' f left) (filter' f right)
+
 
