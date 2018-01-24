@@ -1,10 +1,13 @@
-import Prelude hiding (take,null)
+import Prelude as P hiding (take,null,head,tail,drop,span)
 import Foreign.Ptr
 import Foreign.ForeignPtr
 import Foreign.Storable
 import Data.Word
 import System.IO.Unsafe (unsafePerformIO) -- for internal bytestring implementation only
 import qualified Data.ByteString.Internal as BS (c2w, w2c)
+
+-- Ignore "unsorted" errors
+{-@ LIQUID "--prune-unsorted" @-}
 
 -- Custom implementation of ByteStrings
 {-@ 
@@ -15,6 +18,9 @@ import qualified Data.ByteString.Internal as BS (c2w, w2c)
   }
 @-}
 data ByteString = BS { bPtr :: ForeignPtr Word8, bOff :: !Int, bLen :: !Int }
+
+instance Show ByteString where
+  show = show . unpack
 
 -- Type for bytestrings of a given size
 {-@ type ByteStringN N = {v:ByteString | bLen v = N} @-}
@@ -60,6 +66,11 @@ pack xs  =  unsafeCreate (length xs) $ \p -> go p xs
     {-@ go      :: p:Ptr Word8 -> {s:String | len s <= plen p} -> IO () @-}
     go _ []     =  return ()
     go p (x:xs) =  poke p (BS.c2w x) >> go (p `plusPtr` 1) xs
+
+-- The empty Bytestring
+{-@ empty :: ByteStringN 0 @-}
+empty :: ByteString
+empty = pack ""
 
 -- Refinement type of just the "True" value in Bool
 {-@ type TRUE = {v:Bool | v} @-}
@@ -154,7 +165,7 @@ queryAndChop = do
 -- Test if a bytestring is empty as a function
 {-@ null        :: bs:ByteString -> {v:Bool | v <=> Empty bs} @-}
 null            :: ByteString -> Bool
-null (BS _ _ l) =  l ==  0
+null (BS _ _ l) =  l == 0
 
 -- Safely take the head of a nonempty bytestring
 {-@ head         :: ByteStringNE -> Word8 @-}
@@ -174,11 +185,50 @@ bsLen        :: [ByteString] -> Int
 bsLen []     =  0
 bsLen (b:bs) =  bLen b + bsLen bs
 
+-- Helper lemma for termination checking: the sum of a positive and a natural is a positive that is 
+-- strictly greater than the natural
+{-@ lem   :: {x:Nat | x > 0} -> y:Nat -> {z:Nat | z = x + y} -> {v:Bool | y < z} @-}
+lem       :: Int -> Int -> Int -> Bool
+lem x y z =  y < z
+
+-- Helper for making assertions that are erased after typechecking
+assert     :: a -> b -> b
+assert _ y =  y
+
 -- Group runs of equal Word8s in a bytestring, producing a list of non-empty bytestrings whose total
 -- length equals the input
--- {-@ group :: bs:ByteString -> {v:[ByteStringNE] | bsLen v = bLen bs} @-}
-{-group     :: ByteString -> [ByteString]-}
-{-group bs-}
-  {-| null bs   = []-}
-  {-| otherwise = undefined-}
+{-@ group :: bs:ByteString -> {v:[ByteStringNE] | bsLen v = bLen bs} / [bLen bs] @-}
+group     :: ByteString -> [ByteString]
+group bs
+  | null bs   = []
+  | otherwise = let
+                  (prefix, suffix) = span (head bs) bs
+                in
+                  case bLen prefix of
+                    0         -> [bs] -- this can never happen anyway 
+                    otherwise -> assert (lem (bLen prefix) (bLen suffix) (bLen bs)) $ 
+                                 prefix : group suffix
+  
+-- Refined type for split bytestrings. Enforces correct lengths
+{-@ type BSPair BS = {v:(ByteString, ByteString) | bLen (fst v) + bLen (snd v) = bLen BS} @-}
+
+-- Assumption: "plen" is the same as "fplen" on the same pointer
+{-@ withForeignPtr :: fp:ForeignPtr a -> ({p:Ptr a | plen p = fplen fp} -> IO b) -> IO b @-}
+
+-- Span any nonempty bytestring on a given byte value, returning a pair of bytestrings which concatenate 
+-- to the original bytestring
+{-@ span :: w:Word8 -> bs:ByteString -> BSPair bs @-}
+span     :: Word8 -> ByteString -> (ByteString, ByteString)
+span w bs@(BS fp o l) = unsafePerformIO $ withForeignPtr fp $ \p -> go w (p `plusPtr` o) 0 
+  where
+    {-@ go :: w:Word8 -> {p:Ptr Word8 | bLen bs <= plen p} -> {i:Nat | i <= bLen bs} 
+              -> IO (BSPair bs) / [bLen bs - i] @-}
+    go :: Word8 -> Ptr Word8 -> Int -> IO (ByteString, ByteString)
+    go w p i
+      | i >= bLen bs = return (bs, empty) 
+      | otherwise    = do
+                         w' <- peek (p `plusPtr` i) 
+                         if w /= w' then return (splitAt i)
+                         else go w p (i+1)
+    splitAt i = (take i bs, drop i bs)
 
