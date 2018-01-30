@@ -68,7 +68,7 @@ singleton     :: a -> AVL a
 singleton x   =  Node x empty empty 1
 
 -- Build an AVL tree from a key sandwiched between two existing ones, assuming they are mutually balanced
-{-@ mkNode          :: key:a -> left:AVLL a key -> {right:AVLR a key | isBalanced left right 1} -> AVL a @-}
+{-@ mkNode          :: key:a -> left:AVLL a key -> {right:AVLR a key | isBalanced left right 1} -> {v:AVL a | realHeight v = nodeHeight left right} @-}
 mkNode              :: a -> AVL a -> AVL a -> AVL a
 mkNode x left right =  Node x left right h
   where h           =  nodeHeight left right
@@ -121,4 +121,11 @@ isNode      :: AVL a -> Bool
 isNode Leaf =  False
 isNode _    =  True
 
+-- This definition from the tutorial doesn't pass the SMT solver:
+-- {-@ balL0 :: x:a
+--           -> l:{AVLL a x | noHeavy l}
+--           -> r:{AVLR a x | leftBig l r}
+--           -> AVLN a {realHeight l + 1}
+-- @-}
+-- balL0 v (Node lv ll lr _) r = mkNode lv ll (mkNode v lr r)
 
