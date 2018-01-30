@@ -4,13 +4,13 @@ import Prelude hiding (max)
 {-@ data AVL a =
   Leaf
   | Node {
-    key :: a,
-    left :: AVLL a key,
-    right :: {v:AVLR a key | isBalanced left v 1},
+    key    :: a,
+    left   :: AVLL a key,
+    right  :: {v:AVLR a key | isBalanced left v 1},
     height :: {v:Nat | isRealHeight v left right}
   }
 @-}
-data AVL a = Leaf | Node { key :: a, left :: AVL a, right :: AVL a, height :: Int }
+data AVL a = Leaf | Node { key :: a, left :: AVL a, right :: AVL a, height :: Int } deriving (Show)
 
 -- Trees containing values less than X
 {-@ type AVLL a X = AVL {v:a | v < X} @-}
@@ -73,9 +73,9 @@ mkNode              :: a -> AVL a -> AVL a -> AVL a
 mkNode x left right =  Node x left right h
   where h           =  nodeHeight left right
 
--- Measure the height of an AVL tree, which is guaranteed to be the real height due to the above refinement type
+-- Get the height of an AVL tree, which is guaranteed to be the real height due to the above refinement type
 {-@ measure getHeight @-}
-{-@ getHeight            :: AVL a -> Nat @-}
+{-@ getHeight            :: t:AVL a -> {v:Nat | v = realHeight t} @-}
 getHeight Leaf           =  0
 getHeight (Node _ _ _ h) =  h
 
@@ -107,9 +107,18 @@ rightHeavy t = balanceFactor t < 0
 {-@ inline noHeavy @-}
 noHeavy t = balanceFactor t == 0
 
--- Left Big, No Heavy Case
-{-@ balanceL0 :: key:a -> {left:AVLL a key  | noHeavy left} -> {right:AVLR a key | leftBig left right} -> 
-  AVLN a {realHeight left + 1} @-}
-balanceL0 :: a -> AVL a -> AVL a -> AVL a
-balanceL0 = undefined
+-- Ensure code is unreachable
+{-@ die :: {s:String | false} -> a @-}
+die :: String -> a
+die = error
+
+-- For use with Lemmas 
+assert _ y = y
+
+-- Measure to distinguish Leafs from Nodes
+{-@ measure isNode @-}
+isNode      :: AVL a -> Bool
+isNode Leaf =  False
+isNode _    =  True
+
 
