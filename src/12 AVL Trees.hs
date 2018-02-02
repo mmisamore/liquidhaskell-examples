@@ -228,22 +228,35 @@ delete x (Node y l r _)
   | x > y               =  bal y l (delete x r)
   | otherwise           =  merge x l r
 
+-- Lemma: If r is an AVLR for x, then x is not an element of r
+{-@ lemAVLR              :: x:a -> r:AVLR a x -> {v:Bool | not (Set_mem x (elems r))} / [realHeight r] @-}
+lemAVLR                  :: a -> AVL a -> Bool
+lemAVLR x Leaf           =  True
+lemAVLR x (Node y l r _) =  assert (lemAVLR x l) $ assert (lemAVLR x r) $ True
+
+-- Lemma: If l is an AVLL for x, then x is not an element of l
+{-@ lemAVLL              :: x:a -> l:AVLL a x -> {v:Bool | not (Set_mem x (elems l))} / [realHeight l] @-}
+lemAVLL                  :: a -> AVL a -> Bool
+lemAVLL x Leaf           =  True
+lemAVLL x (Node y l r _) =  assert (lemAVLL x l) $ assert (lemAVLL x r) $ True
+
 -- Merge function to support delete: make the min element of the right subtree the new root
 {-@ merge      :: x:a -> l:AVLL a x -> {r:AVLR a x | isBalanced l r 1} -> {t:AVL a | UpMax t l r} @-}
 merge          :: a -> AVL a -> AVL a -> AVL a
-merge _ Leaf r =  r
-merge _ l Leaf =  l
-merge x l r    =  bal y l r'
+merge x Leaf r =  assert (lemAVLR x r) $ r
+merge x l Leaf =  assert (lemAVLL x l) $ l
+merge x l r    =  assert (lemAVLL x l) $ assert (lemAVLR x r) $ bal y l r'
   where
-    (y,r')     =  getMin r
+    (y,r')     =  getMin r  -- We have to relate r to r' here. This means a refinement to getMin. Essentially r decomposes as y and r'
 
 -- Get the minimum element of any nonempty AVL tree, together with the rest of the tree
-{-@ getMin :: {s:AVL a | realHeight s > 0} -> (y::a, {r:AVL {x:a | x > y} | EqOrDown r s}) / [realHeight s] @-}
-getMin     :: AVL a -> (a, AVL a)
-getMin (Node x Leaf r _) =  (x,r)
-getMin (Node x l r _)    =  (x', bal x l' r)
+{-@ getMin :: {t:AVL a | realHeight t > 0} -> 
+              (y::a, {t':AVL {x:a | x > y} | EqOrDown t' t}) / [realHeight t] @-}
+getMin                     :: AVL a -> (a, AVL a)
+getMin t@(Node y Leaf r _) =  (y,r)
+getMin t@(Node y l r _)    =  (y', bal y l' r)
   where
-    (x',l')              =  getMin l
+    (y',l')                =  getMin l
 
 -- Get the set of elements of any AVL tree in the SMT logic 
 {-@ measure elems @-}
@@ -263,7 +276,7 @@ member x (Node y l r _) = (x == y) || member x l || member x r
 {-@ predicate Add T X S = (elems T = Set_cup (Set_sng X) (elems S)) @-}
 
 -- Assert that T has the same elements as S except X
-{-@ predicate Del T X S = (elems T = Set_dif (elems S) (Set_sng X)) @-}
+{-@ predicate Del T S X = (elems T = Set_dif (elems S) (Set_sng X)) @-}
 
 -- Assert that T has the same elements as the union of L and R, possibly with one more
 {-@ predicate NodeAdd T X L R = (elems T = Set_cup (Set_sng X) (Set_cup (elems L) (elems R))) @-}
