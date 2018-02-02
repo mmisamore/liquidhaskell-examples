@@ -1,4 +1,5 @@
 import Prelude hiding (max)
+import qualified Data.Set as S 
 
 -- A Tree is either a Leaf or an Internal node with some data
 {-@ data AVL a =
@@ -57,18 +58,19 @@ isBalanced left right n =  (0 - n) <= d && d <= n
 -- Refinement type of trees whose height matches another tree
 {-@ type AVLT a T = AVLN a {realHeight T} @-}
 
--- The empty AVL tree
-{-@ empty :: AVLN a 0 @-}
+-- The empty AVL tree. It has an empty set of elements.
+{-@ empty :: {t:AVLN a 0 | Set_emp (elems t)} @-}
 empty     :: AVL a
 empty     =  Leaf
 
--- Build an AVL tree from a single value 
-{-@ singleton :: a -> AVLN a 1 @-}
+-- Build an AVL tree from a single value. The set of elements is just a singleton.
+{-@ singleton :: x:a -> {t:AVLN a 1 | elems t = Set_sng x} @-}
 singleton     :: a -> AVL a
 singleton x   =  Node x empty empty 1
 
 -- Build an AVL tree from a key sandwiched between two existing ones, assuming they are mutually balanced
-{-@ mkNode          :: key:a -> left:AVLL a key -> {right:AVLR a key | isBalanced left right 1} -> {v:AVL a | realHeight v = nodeHeight left right} @-}
+{-@ mkNode          :: key:a -> left:AVLL a key -> {right:AVLR a key | isBalanced left right 1} -> 
+                       {v:AVL a | realHeight v = nodeHeight left right && NodeAdd v key left right} @-}
 mkNode              :: a -> AVL a -> AVL a -> AVL a
 mkNode x left right =  Node x left right h
   where h           =  nodeHeight left right
@@ -78,6 +80,9 @@ mkNode x left right =  Node x left right h
 {-@ getHeight            :: t:AVL a -> {v:Nat | v = realHeight t} @-}
 getHeight Leaf           =  0
 getHeight (Node _ _ _ h) =  h
+
+-- Ensure the invariant is satisfied - this is required due to a bug in LH 
+{-@ invariant {v:AVL a | getHeight v = realHeight v} @-}
 
 -- Left subtree is 2 bigger in height. This is a case requiring rebalancing assuming a tolerance of 1
 {-@ inline leftBig @-}
@@ -115,17 +120,151 @@ die = error
 -- For use with Lemmas 
 assert _ y = y
 
--- Measure to distinguish Leafs from Nodes
-{-@ measure isNode @-}
-isNode      :: AVL a -> Bool
-isNode Leaf =  False
-isNode _    =  True
+-- Rebalance the LeftBig, NoHeavy case. Total height of l + 1 remains the same.
+{-@ balL0 :: x:a -> l:{AVLL a x | noHeavy l} -> r:{AVLR a x | leftBig l r} -> 
+             {t:AVLN a {realHeight l + 1} | NodeAdd t x l r} @-}
+balL0 x l@(Node lv ll lr _) r = mkNode lv ll (mkNode x lr r)
 
--- This definition from the tutorial doesn't pass the SMT solver:
--- {-@ balL0 :: x:a
---           -> l:{AVLL a x | noHeavy l}
---           -> r:{AVLR a x | leftBig l r}
---           -> AVLN a {realHeight l + 1}
--- @-}
--- balL0 v (Node lv ll lr _) r = mkNode lv ll (mkNode v lr r)
+-- Rebalance the RightBig, NoHeavy case. Total height of r + 1 remains the same.
+{-@ balR0 :: x:a -> l:AVLL a x -> r:{AVLR a x | noHeavy r && rightBig l r} -> 
+             {t:AVLN a {realHeight r + 1} | NodeAdd t x l r} @-}
+balR0 x l r@(Node rv rl rr _) = mkNode rv (mkNode x l rl) rr 
 
+-- Rebalance the LeftBig, LeftHeavy case. Total height of l + 1 goes to new height l.
+{-@ balLL :: x:a -> l:{AVLL a x | leftHeavy l} -> r:{AVLR a x | leftBig l r} -> 
+             {t:AVLT a l | NodeAdd t x l r} @-}
+balLL x l@(Node lv ll lr _) r = mkNode lv ll (mkNode x lr r)
+
+-- Rebalance the RightBig, RightHeavy case. Total height of r + 1 goes to new height r.
+{-@ balRR :: x:a -> l:AVLL a x -> r:{AVLR a x | rightHeavy r && rightBig l r} ->
+             {t:AVLT a r | NodeAdd t x l r} @-}
+balRR x l r@(Node rv rl rr _) = mkNode rv (mkNode x l rl) rr 
+
+-- Rebalance the LeftBig, RightHeavy case. Total height of l + 1 goes to new height l.
+{-@ balLR :: x:a -> l:{AVLL a x | rightHeavy l} -> r:{AVLR a x | leftBig l r} -> 
+             {t:AVLT a l | NodeAdd t x l r} @-}
+balLR x l@(Node lv ll (Node lrv lrl lrr _) _) r = mkNode lrv (mkNode lv ll lrl) (mkNode x lrr r)
+
+-- Rebalance the RightBig, LeftHeavy case. Total height of r + 1 goes to new height r.
+{-@ balRL :: x:a -> l:AVLL a x -> r:{AVLR a x | leftHeavy r && rightBig l r} -> 
+             {t:AVLT a r | NodeAdd t x l r} @-}
+balRL x l r@(Node rv (Node rlv rll rlr _) rr _) = mkNode rlv (mkNode x l rll) (mkNode rv rlr rr)
+
+-- T is the same height as S or one more than S
+{-@ predicate EqOrUp T S = (realHeight T = realHeight S) || (realHeight T = realHeight S + 1) @-}
+
+-- First version of inserting an element into an AVL tree, with guaranteed termination
+{-@ insert                :: {z:Nat | z = 1} -> x:a -> s:AVL a -> {t:AVL a | EqOrUp t s} / [realHeight s, z] @-}
+insert                    :: Ord a => Int -> a -> AVL a -> AVL a
+insert _ x Leaf           =  singleton x
+insert _ x s@(Node y _ _ _)
+  | x < y                 =  insL 0 x s
+  | x > y                 =  insR 0 x s
+  | otherwise             =  s 
+
+-- Helper for inserting on the left, with guaranteed termination
+{-@ insL :: {z:Nat | z = 0} -> x:a -> {l:AVL a | x < key l && realHeight l > 0} -> 
+            {t:AVL a | EqOrUp t l} / [realHeight l, z] @-}
+insL :: Ord a => Int -> a -> AVL a -> AVL a
+insL _ x (Node y l r _) 
+  | leftBig l' r && leftHeavy l'  = balLL y l' r
+  | leftBig l' r && rightHeavy l' = balLR y l' r
+  | leftBig l' r                  = balL0 y l' r
+  | otherwise                     = mkNode y l' r 
+  where
+    l' = insert 1 x l
+
+-- Helper for inserting on the right, with guaranteed termination
+{-@ insR :: {z:Nat | z = 0} -> x:a -> {r:AVL a | x > key r && realHeight r > 0} -> 
+            {t:AVL a | EqOrUp t r} / [realHeight r, z] @-}
+insR     :: Ord a => Int -> a -> AVL a -> AVL a
+insR _ x (Node y l r _)
+  | rightBig l r' && leftHeavy r'  = balRL y l r'
+  | rightBig l r' && rightHeavy r' = balRR y l r'
+  | rightBig l r'                  = balR0 y l r'
+  | otherwise                      = mkNode y l r'
+  where
+    r' = insert 1 x r
+
+-- Combined postcondition for all rebalancing cases 
+{-@ predicate UpMax T L R = (realHeight T = max (realHeight L) (realHeight R)) ||
+                            (realHeight T = 1 + max (realHeight L) (realHeight R)) @-}
+
+ 
+-- If the subtrees were aleady balanced, T should just be the join of them
+{-@ predicate IdemBal T L R = (isBalanced L R 1 ==> realHeight T = nodeHeight L R) @-}
+
+-- Generic rebalancing helper: assuming a tree is out of balance after insert/delete, correct the imbalance
+{-@ bal :: x:a -> l:AVLL a x -> {r:AVLR a x | isBalanced l r 2} -> 
+           {t:AVL a | UpMax t l r && IdemBal t l r && NodeAdd t x l r} @-}
+bal     :: a -> AVL a -> AVL a -> AVL a
+bal x l r
+  | leftBig  l r && leftHeavy l  =  balLL x l r
+  | leftBig  l r && rightHeavy l =  balLR x l r
+  | leftBig  l r                 =  balL0 x l r
+  | rightBig l r && leftHeavy r  =  balRL x l r
+  | rightBig l r && rightHeavy r =  balRR x l r
+  | rightBig l r                 =  balR0 x l r
+  | otherwise                    =  mkNode x l r
+
+-- A cleaner version of insert that makes use of the generic rebalancing function above
+{-@ insert' :: Ord a => x:a -> s:AVL a -> {t:AVL a | EqOrUp t s && Add t x s} / [realHeight s] @-}
+insert'     :: Ord a => a -> AVL a -> AVL a
+insert' x Leaf             = singleton x
+insert' x s@(Node y l r _)
+  | x < y                  = bal y (insert' x l) r
+  | x > y                  = bal y l (insert' x r)
+  | otherwise              = s
+
+-- T is the same height as S or one less than S
+{-@ predicate EqOrDown T S = EqOrUp S T @-}
+
+-- Delete a value from an AVL tree
+{-@ delete              :: Ord a => x:a -> s:AVL a -> {t:AVL a | EqOrDown t s} / [realHeight s] @-}
+delete                  :: Ord a => a -> AVL a -> AVL a
+delete x Leaf           =  Leaf
+delete x (Node y l r _)
+  | x < y               =  bal y (delete x l) r
+  | x > y               =  bal y l (delete x r)
+  | otherwise           =  merge x l r
+
+-- Merge function to support delete: make the min element of the right subtree the new root
+{-@ merge      :: x:a -> l:AVLL a x -> {r:AVLR a x | isBalanced l r 1} -> {t:AVL a | UpMax t l r} @-}
+merge          :: a -> AVL a -> AVL a -> AVL a
+merge _ Leaf r =  r
+merge _ l Leaf =  l
+merge x l r    =  bal y l r'
+  where
+    (y,r')     =  getMin r
+
+-- Get the minimum element of any nonempty AVL tree, together with the rest of the tree
+{-@ getMin :: {s:AVL a | realHeight s > 0} -> (y::a, {r:AVL {x:a | x > y} | EqOrDown r s}) / [realHeight s] @-}
+getMin     :: AVL a -> (a, AVL a)
+getMin (Node x Leaf r _) =  (x,r)
+getMin (Node x l r _)    =  (x', bal x l' r)
+  where
+    (x',l')              =  getMin l
+
+-- Get the set of elements of any AVL tree in the SMT logic 
+{-@ measure elems @-}
+{-@ lazy elems @-}
+{-@ elems            :: s:AVL a -> S.Set a @-}
+elems                :: Ord a => AVL a -> S.Set a
+elems Leaf           =  S.empty
+elems (Node x l r _) =  S.singleton x `S.union` elems l `S.union` elems r
+
+-- Test for membership in an AVL tree. The SMT logic guarantees that we do the right thing here
+{-@ member :: Eq a  => x:a -> t:AVL a -> {v:Bool | v  <=> Set_mem x (elems t)} / [realHeight t] @-}
+member     :: Eq a  => a -> AVL a -> Bool
+member x Leaf           = False
+member x (Node y l r _) = (x == y) || member x l || member x r
+
+-- Assert that T has the same elements as S together with X
+{-@ predicate Add T X S = (elems T = Set_cup (Set_sng X) (elems S)) @-}
+
+-- Assert that T has the same elements as S except X
+{-@ predicate Del T X S = (elems T = Set_dif (elems S) (Set_sng X)) @-}
+
+-- Assert that T has the same elements as the union of L and R, possibly with one more
+{-@ predicate NodeAdd T X L R = (elems T = Set_cup (Set_sng X) (Set_cup (elems L) (elems R))) @-}
+ 
