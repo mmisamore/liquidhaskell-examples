@@ -219,13 +219,25 @@ insert' x s@(Node y l r _)
 -- T is the same height as S or one less than S
 {-@ predicate EqOrDown T S = EqOrUp S T @-}
 
+-- Lemma: If x < y and s is an AVLR for y then x cannot be an element of s
+{-@ lemNotEltRight :: x:a -> {y:a | x < y} -> s:AVLR a y -> {v:Bool | not (Set_mem x (elems s))} / [realHeight s] @-}
+lemNotEltRight     :: a -> a -> AVL a -> Bool
+lemNotEltRight x y Leaf           = True 
+lemNotEltRight x y (Node z l r _) = assert (lemNotEltRight x y l) $ assert (lemNotEltRight x y r) $ True 
+
+-- Lemma: If x > y and s is an AVLL for y then x cannot be an element of s
+{-@ lemNotEltLeft :: x:a -> {y:a | x > y} -> s:AVLL a y -> {v:Bool | not (Set_mem x (elems s))} / [realHeight s] @-}
+lemNotEltLeft     :: a -> a -> AVL a -> Bool
+lemNotEltLeft x y Leaf           = True 
+lemNotEltLeft x y (Node z l r _) = assert (lemNotEltLeft x y l) $ assert (lemNotEltLeft x y r) $ True 
+
 -- Delete a value from an AVL tree
-{-@ delete              :: Ord a => x:a -> s:AVL a -> {t:AVL a | EqOrDown t s} / [realHeight s] @-}
+{-@ delete              :: Ord a => x:a -> s:AVL a -> {t:AVL a | EqOrDown t s && not (Set_mem x (elems t))} / [realHeight s] @-}
 delete                  :: Ord a => a -> AVL a -> AVL a
 delete x Leaf           =  Leaf
 delete x (Node y l r _)
-  | x < y               =  bal y (delete x l) r
-  | x > y               =  bal y l (delete x r)
+  | x < y               =  assert (lemNotEltRight x y r) $ bal y (delete x l) r
+  | x > y               =  assert (lemNotEltLeft x y l)  $ bal y l (delete x r)
   | otherwise           =  merge x l r
 
 -- Lemma: If r is an AVLR for x, then x is not an element of r
@@ -241,17 +253,17 @@ lemAVLL x Leaf           =  True
 lemAVLL x (Node y l r _) =  assert (lemAVLL x l) $ assert (lemAVLL x r) $ True
 
 -- Merge function to support delete: make the min element of the right subtree the new root
-{-@ merge      :: x:a -> l:AVLL a x -> {r:AVLR a x | isBalanced l r 1} -> {t:AVL a | UpMax t l r} @-}
+{-@ merge      :: x:a -> l:AVLL a x -> {r:AVLR a x | isBalanced l r 1} -> {t:AVL a | UpMax t l r && not (Set_mem x (elems t))} @-}
 merge          :: a -> AVL a -> AVL a -> AVL a
 merge x Leaf r =  assert (lemAVLR x r) $ r
 merge x l Leaf =  assert (lemAVLL x l) $ l
 merge x l r    =  assert (lemAVLL x l) $ assert (lemAVLR x r) $ bal y l r'
   where
-    (y,r')     =  getMin r  -- We have to relate r to r' here. This means a refinement to getMin. Essentially r decomposes as y and r'
+    (y,r')     =  getMin r
 
 -- Get the minimum element of any nonempty AVL tree, together with the rest of the tree
 {-@ getMin :: {t:AVL a | realHeight t > 0} -> 
-              (y::a, {t':AVL {x:a | x > y} | EqOrDown t' t}) / [realHeight t] @-}
+              (y::a, {t':AVL {x:a | x > y} | EqOrDown t' t && Add t y t'}) / [realHeight t] @-}
 getMin                     :: AVL a -> (a, AVL a)
 getMin t@(Node y Leaf r _) =  (y,r)
 getMin t@(Node y l r _)    =  (y', bal y l' r)
@@ -280,4 +292,5 @@ member x (Node y l r _) = (x == y) || member x l || member x r
 
 -- Assert that T has the same elements as the union of L and R, possibly with one more
 {-@ predicate NodeAdd T X L R = (elems T = Set_cup (Set_sng X) (Set_cup (elems L) (elems R))) @-}
- 
+
+
