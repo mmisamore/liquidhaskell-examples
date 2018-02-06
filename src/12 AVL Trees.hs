@@ -68,11 +68,33 @@ empty     =  Leaf
 singleton     :: a -> AVL a
 singleton x   =  Node x empty empty 1
 
+-- Lemma: A tree S is disjoint from a tree T if its root and subtrees are disjoint from T
+{-@ lemDisjointTrees :: s:AVL a -> {t:AVL a | NotIn t (key s) && Disjoint t (left s) && Disjoint t (right s)} -> 
+                        {v:Bool | Disjoint t s} 
+@-}
+lemDisjointTrees     :: AVL a -> AVL a -> Bool
+lemDisjointTrees Leaf _             =  True
+lemDisjointTrees s@(Node x l r _) t =  True
+
+-- Lemma: If l and r are left and right subtrees for the same key x then their element sets are disjoint
+{-@ lemDisjointSubtrees :: x:a -> l:AVLL a x -> r:AVLR a x -> {v:Bool | Disjoint l r} / [realHeight l, realHeight r] @-}
+lemDisjointSubtrees     :: a -> AVL a -> AVL a -> Bool
+lemDisjointSubtrees x Leaf r = True
+lemDisjointSubtrees x l Leaf = True
+lemDisjointSubtrees x s@(Node y ll lr _) r = 
+  assert (lemDisjointSubtrees x ll r) $
+  assert (lemDisjointSubtrees x lr r) $
+  assert (lemNotEltRight y x r)       $
+  assert (lemDisjointTrees s r)       $ True
+
 -- Build an AVL tree from a key sandwiched between two existing ones, assuming they are mutually balanced
 {-@ mkNode          :: key:a -> left:AVLL a key -> {right:AVLR a key | isBalanced left right 1} -> 
-                       {v:AVL a | realHeight v = nodeHeight left right && NodeAdd v key left right} @-}
+                       {v:AVL a | realHeight v = nodeHeight left right && NodeAddExact v key left right} @-}
 mkNode              :: a -> AVL a -> AVL a -> AVL a
-mkNode x left right =  Node x left right h
+mkNode x left right =  assert (lemAVLL x left) $ 
+                       assert (lemAVLR x right) $ 
+                       assert (lemDisjointSubtrees x left right) $ 
+                       Node x left right h
   where h           =  nodeHeight left right
 
 -- Get the height of an AVL tree, which is guaranteed to be the real height due to the above refinement type
@@ -122,32 +144,32 @@ assert _ y = y
 
 -- Rebalance the LeftBig, NoHeavy case. Total height of l + 1 remains the same.
 {-@ balL0 :: x:a -> l:{AVLL a x | noHeavy l} -> r:{AVLR a x | leftBig l r} -> 
-             {t:AVLN a {realHeight l + 1} | NodeAdd t x l r} @-}
+             {t:AVLN a {realHeight l + 1} | NodeAddExact t x l r} @-}
 balL0 x l@(Node lv ll lr _) r = mkNode lv ll (mkNode x lr r)
 
 -- Rebalance the RightBig, NoHeavy case. Total height of r + 1 remains the same.
 {-@ balR0 :: x:a -> l:AVLL a x -> r:{AVLR a x | noHeavy r && rightBig l r} -> 
-             {t:AVLN a {realHeight r + 1} | NodeAdd t x l r} @-}
+             {t:AVLN a {realHeight r + 1} | NodeAddExact t x l r} @-}
 balR0 x l r@(Node rv rl rr _) = mkNode rv (mkNode x l rl) rr 
 
 -- Rebalance the LeftBig, LeftHeavy case. Total height of l + 1 goes to new height l.
 {-@ balLL :: x:a -> l:{AVLL a x | leftHeavy l} -> r:{AVLR a x | leftBig l r} -> 
-             {t:AVLT a l | NodeAdd t x l r} @-}
+             {t:AVLT a l | NodeAddExact t x l r} @-}
 balLL x l@(Node lv ll lr _) r = mkNode lv ll (mkNode x lr r)
 
 -- Rebalance the RightBig, RightHeavy case. Total height of r + 1 goes to new height r.
 {-@ balRR :: x:a -> l:AVLL a x -> r:{AVLR a x | rightHeavy r && rightBig l r} ->
-             {t:AVLT a r | NodeAdd t x l r} @-}
+             {t:AVLT a r | NodeAddExact t x l r} @-}
 balRR x l r@(Node rv rl rr _) = mkNode rv (mkNode x l rl) rr 
 
 -- Rebalance the LeftBig, RightHeavy case. Total height of l + 1 goes to new height l.
 {-@ balLR :: x:a -> l:{AVLL a x | rightHeavy l} -> r:{AVLR a x | leftBig l r} -> 
-             {t:AVLT a l | NodeAdd t x l r} @-}
+             {t:AVLT a l | NodeAddExact t x l r} @-}
 balLR x l@(Node lv ll (Node lrv lrl lrr _) _) r = mkNode lrv (mkNode lv ll lrl) (mkNode x lrr r)
 
 -- Rebalance the RightBig, LeftHeavy case. Total height of r + 1 goes to new height r.
 {-@ balRL :: x:a -> l:AVLL a x -> r:{AVLR a x | leftHeavy r && rightBig l r} -> 
-             {t:AVLT a r | NodeAdd t x l r} @-}
+             {t:AVLT a r | NodeAddExact t x l r} @-}
 balRL x l r@(Node rv (Node rlv rll rlr _) rr _) = mkNode rlv (mkNode x l rll) (mkNode rv rlr rr)
 
 -- T is the same height as S or one more than S
@@ -196,7 +218,7 @@ insR _ x (Node y l r _)
 
 -- Generic rebalancing helper: assuming a tree is out of balance after insert/delete, correct the imbalance
 {-@ bal :: x:a -> l:AVLL a x -> {r:AVLR a x | isBalanced l r 2} -> 
-           {t:AVL a | UpMax t l r && IdemBal t l r && NodeAdd t x l r} @-}
+           {t:AVL a | UpMax t l r && IdemBal t l r && NodeAddExact t x l r} @-}
 bal     :: a -> AVL a -> AVL a -> AVL a
 bal x l r
   | leftBig  l r && leftHeavy l  =  balLL x l r
@@ -220,19 +242,19 @@ insert' x s@(Node y l r _)
 {-@ predicate EqOrDown T S = EqOrUp S T @-}
 
 -- Lemma: If x < y and s is an AVLR for y then x cannot be an element of s
-{-@ lemNotEltRight :: x:a -> {y:a | x < y} -> s:AVLR a y -> {v:Bool | not (Set_mem x (elems s))} / [realHeight s] @-}
+{-@ lemNotEltRight :: x:a -> {y:a | x < y} -> s:AVLR a y -> {v:Bool | NotIn s x} / [realHeight s] @-}
 lemNotEltRight     :: a -> a -> AVL a -> Bool
 lemNotEltRight x y Leaf           = True 
 lemNotEltRight x y (Node z l r _) = assert (lemNotEltRight x y l) $ assert (lemNotEltRight x y r) $ True 
 
 -- Lemma: If x > y and s is an AVLL for y then x cannot be an element of s
-{-@ lemNotEltLeft :: x:a -> {y:a | x > y} -> s:AVLL a y -> {v:Bool | not (Set_mem x (elems s))} / [realHeight s] @-}
+{-@ lemNotEltLeft :: x:a -> {y:a | x > y} -> s:AVLL a y -> {v:Bool | NotIn s x} / [realHeight s] @-}
 lemNotEltLeft     :: a -> a -> AVL a -> Bool
 lemNotEltLeft x y Leaf           = True 
 lemNotEltLeft x y (Node z l r _) = assert (lemNotEltLeft x y l) $ assert (lemNotEltLeft x y r) $ True 
 
 -- Delete a value from an AVL tree
-{-@ delete              :: Ord a => x:a -> s:AVL a -> {t:AVL a | EqOrDown t s && not (Set_mem x (elems t))} / [realHeight s] @-}
+{-@ delete              :: Ord a => x:a -> s:AVL a -> {t:AVL a | EqOrDown t s && NotIn t x} / [realHeight s] @-}
 delete                  :: Ord a => a -> AVL a -> AVL a
 delete x Leaf           =  Leaf
 delete x (Node y l r _)
@@ -241,19 +263,19 @@ delete x (Node y l r _)
   | otherwise           =  merge x l r
 
 -- Lemma: If r is an AVLR for x, then x is not an element of r
-{-@ lemAVLR              :: x:a -> r:AVLR a x -> {v:Bool | not (Set_mem x (elems r))} / [realHeight r] @-}
+{-@ lemAVLR              :: x:a -> r:AVLR a x -> {v:Bool | NotIn r x} / [realHeight r] @-}
 lemAVLR                  :: a -> AVL a -> Bool
 lemAVLR x Leaf           =  True
 lemAVLR x (Node y l r _) =  assert (lemAVLR x l) $ assert (lemAVLR x r) $ True
 
 -- Lemma: If l is an AVLL for x, then x is not an element of l
-{-@ lemAVLL              :: x:a -> l:AVLL a x -> {v:Bool | not (Set_mem x (elems l))} / [realHeight l] @-}
+{-@ lemAVLL              :: x:a -> l:AVLL a x -> {v:Bool | NotIn l x} / [realHeight l] @-}
 lemAVLL                  :: a -> AVL a -> Bool
 lemAVLL x Leaf           =  True
 lemAVLL x (Node y l r _) =  assert (lemAVLL x l) $ assert (lemAVLL x r) $ True
 
 -- Merge function to support delete: make the min element of the right subtree the new root
-{-@ merge      :: x:a -> l:AVLL a x -> {r:AVLR a x | isBalanced l r 1} -> {t:AVL a | UpMax t l r && not (Set_mem x (elems t))} @-}
+{-@ merge      :: x:a -> l:AVLL a x -> {r:AVLR a x | isBalanced l r 1} -> {t:AVL a | UpMax t l r && NotIn t x} @-}
 merge          :: a -> AVL a -> AVL a -> AVL a
 merge x Leaf r =  assert (lemAVLR x r) $ r
 merge x l Leaf =  assert (lemAVLL x l) $ l
@@ -284,13 +306,24 @@ member     :: Eq a  => a -> AVL a -> Bool
 member x Leaf           = False
 member x (Node y l r _) = (x == y) || member x l || member x r
 
--- Assert that T has the same elements as S together with X
+-- Assert that the element set of T is the union of S and the singleton X
 {-@ predicate Add T X S = (elems T = Set_cup (Set_sng X) (elems S)) @-}
 
--- Assert that T has the same elements as S except X
+-- Assert that the element set of T is the disjoint union of S and the singleton X 
+{-@ predicate AddNew T X S = (Add T X S && Set_emp (Set_cap (Set_sng X) (elems S))) @-}
+
+-- Assert that the element set of T is the difference between S and X 
 {-@ predicate Del T S X = (elems T = Set_dif (elems S) (Set_sng X)) @-}
 
--- Assert that T has the same elements as the union of L and R, possibly with one more
+-- Assert that the element set of T is the union of L, R, and the singleton X 
 {-@ predicate NodeAdd T X L R = (elems T = Set_cup (Set_sng X) (Set_cup (elems L) (elems R))) @-}
 
+-- Assert that the element sets of S and T are disjoint
+{-@ predicate Disjoint S T = (Set_emp (Set_cap (elems S) (elems T))) @-}
+
+-- Assert that an element does not belong to a tree
+{-@ predicate NotIn S X = (not (Set_mem X (elems S))) @-}
+  
+-- Assert that the element set of T is the disjoint union of L, R, and the singleton X
+{-@ predicate NodeAddExact T X L R = (NodeAdd T X L R && Disjoint L R && NotIn L X && NotIn R X) @-}
 
